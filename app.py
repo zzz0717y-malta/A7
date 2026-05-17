@@ -566,6 +566,44 @@ def probability_table(logits: torch.Tensor, labels: torch.Tensor) -> pd.DataFram
     return pd.DataFrame(rows)
 
 
+def rotation_stage_summary(
+    before_logits: torch.Tensor,
+    after_logits: torch.Tensor,
+    labels: torch.Tensor,
+) -> pd.DataFrame:
+    rows = []
+    for stage, logits in [("训练前", before_logits), ("训练后", after_logits)]:
+        probs = logits.softmax(dim=1)
+        preds = probs.argmax(dim=1)
+        rows.append(
+            {
+                "阶段": stage,
+                "样本准确率": float((preds == labels).float().mean().item()),
+                "平均置信度": float(probs.max(dim=1).values.mean().item()),
+            }
+        )
+    return pd.DataFrame(rows)
+
+
+def mask_stage_summary(result: MaskedResult) -> pd.DataFrame:
+    rows = []
+    for setting in result.masked.keys():
+        before_loss = float(masked_mse(result.before[setting], result.original, result.masks[setting]).item())
+        after_loss = float(masked_mse(result.after[setting], result.original, result.masks[setting]).item())
+        drop = before_loss - after_loss
+        drop_ratio = (drop / before_loss * 100.0) if before_loss > 0 else 0.0
+        rows.append(
+            {
+                "设置": setting,
+                "训练前 loss": before_loss,
+                "训练后 loss": after_loss,
+                "loss 下降": drop,
+                "下降比例": drop_ratio,
+            }
+        )
+    return pd.DataFrame(rows)
+
+
 def render_rotation_tab(data: torch.Tensor, controls: Dict[str, float]) -> None:
     st.subheader("旋转预测")
     st.markdown(
@@ -606,6 +644,20 @@ def render_rotation_tab(data: torch.Tensor, controls: Dict[str, float]) -> None:
             ),
             use_container_width=True,
             hide_index=True,
+        )
+        st.caption("训练前后效果对比")
+        st.dataframe(
+            rotation_stage_summary(
+                result.sample_logits_before,
+                result.sample_logits_after,
+                result.sample_labels,
+            ),
+            use_container_width=True,
+            hide_index=True,
+            column_config={
+                "样本准确率": st.column_config.NumberColumn(format="%.2f"),
+                "平均置信度": st.column_config.NumberColumn(format="%.2f"),
+            },
         )
 
     with left:
@@ -675,6 +727,18 @@ def render_masked_tab(data: torch.Tensor, controls: Dict[str, float]) -> None:
             ),
             use_container_width=True,
             hide_index=True,
+        )
+        st.caption("不同遮挡比例的训练前后对比")
+        st.dataframe(
+            mask_stage_summary(result),
+            use_container_width=True,
+            hide_index=True,
+            column_config={
+                "训练前 loss": st.column_config.NumberColumn(format="%.4f"),
+                "训练后 loss": st.column_config.NumberColumn(format="%.4f"),
+                "loss 下降": st.column_config.NumberColumn(format="%.4f"),
+                "下降比例": st.column_config.NumberColumn(format="%.1f%%"),
+            },
         )
 
     with left:
